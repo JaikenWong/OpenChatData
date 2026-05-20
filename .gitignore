@@ -1,0 +1,44 @@
+# Java
+target/
+*.class
+*.jar
+*.war
+*.log
+heapdump*.hprof
+
+# Maven
+.mvn/
+!**/src/main/**/target/
+!**/src/test/**/target/
+
+# IDE
+.idea/
+*.iml
+.vscode/
+.project
+.classpath
+.settings/
+*.swp
+*~
+
+# Node
+node_modules/
+dist/
+frontend/dist/
+frontend/node_modules/
+
+# Docker
+docker-compose.override.yml
+
+# Environment
+.env
+.env.local
+*.env.local
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+logs/
+*.log
