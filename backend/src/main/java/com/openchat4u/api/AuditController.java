@@ -1,11 +1,9 @@
 package com.openchat4u.api;
 
+import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.openchat4u.audit.AuditLog;
 import com.openchat4u.audit.AuditLogService;
 import lombok.RequiredArgsConstructor;
-import org.springframework.data.domain.Page;
-import org.springframework.data.domain.PageRequest;
-import org.springframework.data.domain.Sort;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDateTime;
@@ -19,25 +17,23 @@ public class AuditController {
     private final AuditLogService auditLogService;
 
     @GetMapping("/{tenantCode}")
-    public Page<AuditLog> listLogs(
+    public IPage<AuditLog> listLogs(
             @PathVariable String tenantCode,
-            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "1") int page,
             @RequestParam(defaultValue = "20") int size,
             @RequestParam(required = false) String action,
             @RequestParam(required = false) String startDate,
             @RequestParam(required = false) String endDate) {
-        
-        PageRequest pageRequest = PageRequest.of(page, size, Sort.by("createdAt").descending());
-        
+
         if (startDate != null && endDate != null) {
             LocalDateTime start = LocalDateTime.parse(startDate);
             LocalDateTime end = LocalDateTime.parse(endDate);
-            return auditLogService.findByTenantAndDateRange(tenantCode, start, end, pageRequest);
+            return auditLogService.findByTenantAndDateRange(tenantCode, start, end, page, size);
         }
         if (action != null && !action.trim().isEmpty()) {
-            return auditLogService.findByTenantAndAction(tenantCode, action, pageRequest);
+            return auditLogService.findByTenantAndAction(tenantCode, action, page, size);
         }
-        return auditLogService.findByTenant(tenantCode, pageRequest);
+        return auditLogService.findByTenant(tenantCode, page, size);
     }
 
     @GetMapping("/{tenantCode}/stats")

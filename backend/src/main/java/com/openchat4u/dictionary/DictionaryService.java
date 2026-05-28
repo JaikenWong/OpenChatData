@@ -1,7 +1,9 @@
 package com.openchat4u.dictionary;
 
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+
 import java.util.List;
 
 @Service
@@ -10,28 +12,51 @@ public class DictionaryService {
     private final DictionaryRepository dictionaryRepository;
 
     public List<Dictionary> findByTenantAndType(String tenantCode, String type) {
-        return dictionaryRepository.findByTenantCodeAndTypeAndIsActiveTrue(tenantCode, type);
+        return dictionaryRepository.selectList(
+            new LambdaQueryWrapper<Dictionary>()
+                .eq(Dictionary::getTenantCode, tenantCode)
+                .eq(Dictionary::getType, type)
+                .eq(Dictionary::getIsActive, true)
+        );
     }
 
     public List<Dictionary> findByTenant(String tenantCode) {
-        return dictionaryRepository.findByTenantCodeAndIsActiveTrue(tenantCode);
+        return dictionaryRepository.selectList(
+            new LambdaQueryWrapper<Dictionary>()
+                .eq(Dictionary::getTenantCode, tenantCode)
+                .eq(Dictionary::getIsActive, true)
+        );
     }
 
     public List<Dictionary> searchByTenantAndTerm(String tenantCode, String term) {
-        return dictionaryRepository.findByTenantCodeAndTermContainingIgnoreCaseAndIsActiveTrue(tenantCode, term);
+        return dictionaryRepository.selectList(
+            new LambdaQueryWrapper<Dictionary>()
+                .eq(Dictionary::getTenantCode, tenantCode)
+                .like(Dictionary::getTerm, term)
+                .eq(Dictionary::getIsActive, true)
+        );
     }
 
     public Dictionary findById(Long id) {
-        return dictionaryRepository.findById(id)
-            .orElseThrow(() -> new IllegalArgumentException("Dictionary not found: " + id));
+        Dictionary d = dictionaryRepository.selectById(id);
+        if (d == null) {
+            throw new IllegalArgumentException("Dictionary not found: " + id);
+        }
+        return d;
     }
 
     public Dictionary create(Dictionary dictionary) {
-        if (dictionaryRepository.existsByTenantCodeAndTypeAndTerm(
-                dictionary.getTenantCode(), dictionary.getType(), dictionary.getTerm())) {
+        boolean exists = dictionaryRepository.exists(
+            new LambdaQueryWrapper<Dictionary>()
+                .eq(Dictionary::getTenantCode, dictionary.getTenantCode())
+                .eq(Dictionary::getType, dictionary.getType())
+                .eq(Dictionary::getTerm, dictionary.getTerm())
+        );
+        if (exists) {
             throw new IllegalArgumentException("Dictionary term already exists for this tenant and type");
         }
-        return dictionaryRepository.save(dictionary);
+        dictionaryRepository.insert(dictionary);
+        return dictionary;
     }
 
     public Dictionary update(Long id, Dictionary details) {
@@ -41,17 +66,18 @@ public class DictionaryService {
         dictionary.setDescription(details.getDescription());
         dictionary.setType(details.getType());
         dictionary.setIsActive(details.getIsActive());
-        return dictionaryRepository.save(dictionary);
+        dictionaryRepository.updateById(dictionary);
+        return dictionary;
     }
 
     public void delete(Long id) {
         Dictionary dictionary = findById(id);
         dictionary.setIsActive(false);
-        dictionaryRepository.save(dictionary);
+        dictionaryRepository.updateById(dictionary);
     }
 
     public String enhanceQuestion(String tenantCode, String question) {
-        List<Dictionary> dictionaries = dictionaryRepository.findByTenantCodeAndIsActiveTrue(tenantCode);
+        List<Dictionary> dictionaries = findByTenant(tenantCode);
         String enhanced = question;
         for (Dictionary dict : dictionaries) {
             if (dict.getSynonyms() != null && !dict.getSynonyms().isEmpty()) {

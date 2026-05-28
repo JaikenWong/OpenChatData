@@ -1,10 +1,8 @@
 package com.openchat4u.rbac;
 
-import org.springframework.data.jpa.repository.JpaRepository;
-import java.util.List;
+import com.baomidou.mybatisplus.core.mapper.BaseMapper;
+import org.apache.ibatis.annotations.Mapper;
 
-public interface RoleRepository extends JpaRepository<Role, Long> {
-    List<Role> findByTenantCode(String tenantCode);
-    boolean existsByName(String name);
-    Role findByName(String name);
+@Mapper
+public interface RoleRepository extends BaseMapper<Role> {
 }

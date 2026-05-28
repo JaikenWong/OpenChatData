@@ -1,6 +1,7 @@
 package com.openchat4u.schema;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.openchat4u.llm.EmbeddingClient;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -16,6 +17,8 @@ public class SchemaService {
 
     private final DataSourceRegistry dataSourceRegistry;
     private final ObjectMapper objectMapper;
+    private final EmbeddingClient embeddingClient;
+    private final QdrantService qdrantService;
 
     public List<String> getTables(String tenantCode) {
         JdbcTemplate jdbcTemplate = getJdbcTemplate(tenantCode);
@@ -41,6 +44,9 @@ public class SchemaService {
         }
 
         String columnSql = getColumnsSql(dbType);
+        Object[] params = "POSTGRESQL".equals(dbType)
+            ? new Object[]{tableName, tableName}
+            : new Object[]{tableName};
         List<TableSchema.ColumnSchema> columns = jdbcTemplate.query(columnSql, (rs, rowNum) -> {
             TableSchema.ColumnSchema col = new TableSchema.ColumnSchema();
             col.setColumnName(rs.getString("column_name"));
@@ -48,20 +54,95 @@ public class SchemaService {
             col.setColumnComment(rs.getString("column_comment"));
             col.setNullable("YES".equals(rs.getString("is_nullable")));
             return col;
-        }, tableName);
+        }, params);
 
         TableSchema schema = new TableSchema();
         schema.setTableName(tableName);
         schema.setTableComment(comment);
         schema.setColumns(columns);
+        schema.setSampleRows(getSampleRows(jdbcTemplate, dbType, tableName));
 
         return schema;
     }
 
+    private static final int SAMPLE_ROW_LIMIT = 5;
+
+    /**
+     * Fetch a few sample rows so the LLM sees real data vocabulary (critical
+     * for EAV / dimension tables where the meaningful values live in rows,
+     * not in the DDL).
+     */
+    private List<Map<String, Object>> getSampleRows(JdbcTemplate jdbcTemplate, String dbType, String tableName) {
+        String quoted = switch (dbType) {
+            case "MYSQL" -> "`" + tableName + "`";
+            case "SQLSERVER" -> "[" + tableName + "]";
+            default -> "\"" + tableName + "\"";
+        };
+        String sql = switch (dbType) {
+            case "SQLSERVER" -> "SELECT TOP " + SAMPLE_ROW_LIMIT + " * FROM " + quoted;
+            case "ORACLE" -> "SELECT * FROM " + quoted + " WHERE ROWNUM <= " + SAMPLE_ROW_LIMIT;
+            default -> "SELECT * FROM " + quoted + " LIMIT " + SAMPLE_ROW_LIMIT;
+        };
+        try {
+            return jdbcTemplate.queryForList(sql);
+        } catch (Exception e) {
+            log.warn("Could not fetch sample rows for {}: {}", tableName, e.getMessage());
+            return List.of();
+        }
+    }
+
     public void syncSchemaToQdrant(String tenantCode, List<String> tableNames) {
-        // TODO: 实现 Qdrant 向量检索集成
-        log.info("Schema sync requested for tenant: {}, tables: {}", tenantCode, tableNames);
-        log.warn("Qdrant integration is pending - using simplified schema storage");
+        if (tableNames == null || tableNames.isEmpty()) {
+            tableNames = getTables(tenantCode);
+        }
+        log.info("Schema sync started for tenant: {}, table count: {}", tenantCode, tableNames.size());
+
+        List<TableSchema> schemas = new ArrayList<>();
+        List<String> texts = new ArrayList<>();
+        for (String tableName : tableNames) {
+            try {
+                TableSchema schema = getTableSchema(tenantCode, tableName);
+                schemas.add(schema);
+                texts.add(buildSchemaText(schema));
+            } catch (Exception e) {
+                log.warn("Skip table {} due to error: {}", tableName, e.getMessage());
+            }
+        }
+        if (texts.isEmpty()) {
+            log.warn("No schemas to sync for tenant: {}", tenantCode);
+            return;
+        }
+
+        List<List<Float>> embeddings = embeddingClient.embedBatch(texts);
+        int vectorSize = embeddings.get(0).size();
+        qdrantService.ensureCollection(tenantCode, vectorSize);
+
+        List<QdrantService.Point> points = new ArrayList<>(schemas.size());
+        for (int i = 0; i < schemas.size(); i++) {
+            TableSchema s = schemas.get(i);
+            Map<String, Object> payload = new HashMap<>();
+            payload.put("tableName", s.getTableName());
+            payload.put("tableComment", s.getTableComment());
+            payload.put("schemaText", texts.get(i));
+            points.add(QdrantService.Point.of(
+                UUID.nameUUIDFromBytes((tenantCode + ":" + s.getTableName()).getBytes()).toString(),
+                embeddings.get(i),
+                payload
+            ));
+        }
+        qdrantService.upsertPoints(tenantCode, points);
+        log.info("Schema sync completed for tenant: {}, points: {}", tenantCode, points.size());
+    }
+
+    public List<String> searchRelevantTables(String tenantCode, String question, int topK) {
+        List<Float> queryVec = embeddingClient.embed(question);
+        List<QdrantService.SearchHit> hits = qdrantService.search(tenantCode, queryVec, topK);
+        List<String> tables = new ArrayList<>();
+        for (QdrantService.SearchHit hit : hits) {
+            Object name = hit.payload != null ? hit.payload.get("tableName") : null;
+            if (name != null) tables.add(name.toString());
+        }
+        return tables;
     }
 
     private String getDbType(String tenantCode) {
@@ -154,7 +235,19 @@ public class SchemaService {
             }
             sb.append("\n");
         }
+        appendSampleRows(sb, schema);
         return sb.toString();
+    }
+
+    public static void appendSampleRows(StringBuilder sb, TableSchema schema) {
+        List<Map<String, Object>> rows = schema.getSampleRows();
+        if (rows == null || rows.isEmpty()) {
+            return;
+        }
+        sb.append("Sample rows:\n");
+        for (Map<String, Object> row : rows) {
+            sb.append("  ").append(row).append("\n");
+        }
     }
 
     private JdbcTemplate getJdbcTemplate(String tenantCode) {

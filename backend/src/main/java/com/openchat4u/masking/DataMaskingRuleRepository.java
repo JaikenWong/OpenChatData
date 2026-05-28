@@ -1,11 +1,8 @@
 package com.openchat4u.masking;
 
-import org.springframework.data.jpa.repository.JpaRepository;
-import java.util.List;
-import java.util.Optional;
+import com.baomidou.mybatisplus.core.mapper.BaseMapper;
+import org.apache.ibatis.annotations.Mapper;
 
-public interface DataMaskingRuleRepository extends JpaRepository<DataMaskingRule, Long> {
-    List<DataMaskingRule> findByTenantCodeAndIsActiveTrue(String tenantCode);
-    Optional<DataMaskingRule> findByTenantCodeAndTableNameAndColumnNameAndIsActiveTrue(String tenantCode, String tableName, String columnName);
-    List<DataMaskingRule> findByTenantCodeAndTableNameAndIsActiveTrue(String tenantCode, String tableName);
+@Mapper
+public interface DataMaskingRuleRepository extends BaseMapper<DataMaskingRule> {
 }

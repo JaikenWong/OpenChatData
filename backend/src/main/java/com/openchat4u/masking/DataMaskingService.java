@@ -1,10 +1,11 @@
 package com.openchat4u.masking;
 
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+
 import java.util.List;
 import java.util.Map;
-import java.util.regex.Pattern;
 
 @Service
 @RequiredArgsConstructor
@@ -12,22 +13,34 @@ public class DataMaskingService {
     private final DataMaskingRuleRepository maskingRuleRepository;
 
     public List<DataMaskingRule> findByTenant(String tenantCode) {
-        return maskingRuleRepository.findByTenantCodeAndIsActiveTrue(tenantCode);
+        return maskingRuleRepository.selectList(
+            new LambdaQueryWrapper<DataMaskingRule>()
+                .eq(DataMaskingRule::getTenantCode, tenantCode)
+                .eq(DataMaskingRule::getIsActive, true)
+        );
     }
 
     public List<DataMaskingRule> findByTenantAndTable(String tenantCode, String tableName) {
-        return maskingRuleRepository.findByTenantCodeAndTableNameAndIsActiveTrue(tenantCode, tableName);
+        return maskingRuleRepository.selectList(
+            new LambdaQueryWrapper<DataMaskingRule>()
+                .eq(DataMaskingRule::getTenantCode, tenantCode)
+                .eq(DataMaskingRule::getTableName, tableName)
+                .eq(DataMaskingRule::getIsActive, true)
+        );
     }
 
     public DataMaskingRule create(DataMaskingRule rule) {
-        return maskingRuleRepository.save(rule);
+        maskingRuleRepository.insert(rule);
+        return rule;
     }
 
     public void delete(Long id) {
-        DataMaskingRule rule = maskingRuleRepository.findById(id)
-            .orElseThrow(() -> new IllegalArgumentException("Masking rule not found: " + id));
+        DataMaskingRule rule = maskingRuleRepository.selectById(id);
+        if (rule == null) {
+            throw new IllegalArgumentException("Masking rule not found: " + id);
+        }
         rule.setIsActive(false);
-        maskingRuleRepository.save(rule);
+        maskingRuleRepository.updateById(rule);
     }
 
     public List<Map<String, Object>> applyMasking(String tenantCode, String tableName, List<Map<String, Object>> data) {
@@ -70,20 +83,20 @@ public class DataMaskingService {
 
     private String maskPartial(String value, String pattern) {
         if (value.length() <= 4) return maskFull(value);
-        
+
         int showStart = 2;
         int showEnd = 2;
-        
+
         if (pattern != null && pattern.contains("-")) {
             String[] parts = pattern.split("-");
             showStart = Integer.parseInt(parts[0]);
             showEnd = Integer.parseInt(parts[1]);
         }
-        
+
         String start = value.substring(0, Math.min(showStart, value.length()));
         String end = value.substring(Math.max(showStart, value.length() - showEnd));
         String middle = "*".repeat(Math.max(0, value.length() - showStart - showEnd));
-        
+
         return start + middle + end;
     }
 

@@ -52,21 +52,23 @@ class QueryServiceValidationTest {
         assertTrue(isValidReadOnlySQL("SELECT * FROM users /* comment */"));
     }
 
-    private boolean isValidReadOnlySQL(String sql, String dbType) {
+    @Test
+    void testColumnNamesContainingKeywords() {
+        // created_at / updated_at must not trip CREATE / UPDATE guards.
+        assertTrue(isValidReadOnlySQL("SELECT created_at, updated_at FROM users"));
+        assertTrue(isValidReadOnlySQL("SELECT * FROM products ORDER BY created_at DESC"));
+        assertTrue(isValidReadOnlySQL("SELECT name, created_at FROM products WHERE updated_at > '2026-01-01'"));
+    }
+
+    private static final java.util.regex.Pattern WRITE_KEYWORD = java.util.regex.Pattern.compile(
+        "\\b(DROP|TRUNCATE|DELETE|INSERT|UPDATE|ALTER|CREATE|GRANT|REVOKE|MERGE|CALL)\\b",
+        java.util.regex.Pattern.CASE_INSENSITIVE);
+
+    private boolean isValidReadOnlySQL(String sql) {
         String upper = sql.toUpperCase().trim();
         boolean isReadOnly = upper.startsWith("SELECT") || upper.startsWith("WITH") ||
                upper.startsWith("SHOW") || upper.startsWith("DESCRIBE") || upper.startsWith("EXPLAIN");
-        
-        if (dbType.equals("ORACLE")) {
-            isReadOnly = isReadOnly || upper.startsWith("SELECT") || upper.startsWith("WITH");
-        }
-        
-        return isReadOnly && !upper.contains("DROP") && !upper.contains("TRUNCATE") && 
-               !upper.contains("DELETE") && !upper.contains("INSERT") && !upper.contains("UPDATE") &&
-               !upper.contains("ALTER") && !upper.contains("CREATE");
-    }
 
-    private boolean isValidReadOnlySQL(String sql) {
-        return isValidReadOnlySQL(sql, "POSTGRESQL");
+        return isReadOnly && !WRITE_KEYWORD.matcher(sql).find();
     }
 }

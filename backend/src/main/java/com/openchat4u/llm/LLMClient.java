@@ -1,12 +1,16 @@
 package com.openchat4u.llm;
 
-import com.theokanning.openai.service.OpenAiService;
-import com.theokanning.openai.completion.chat.ChatCompletionRequest;
-import com.theokanning.openai.completion.chat.ChatMessage;
-import com.theokanning.openai.completion.chat.ChatMessageRole;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpEntity;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpMethod;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
+import org.springframework.web.client.RestTemplate;
 
 import java.util.List;
 import java.util.Map;
@@ -15,62 +19,51 @@ import java.util.Map;
 @Slf4j
 public class LLMClient {
 
-    @Value("${llm.provider:local}")
-    private String provider;
+    @Value("${llm.base-url:}")
+    private String baseUrl;
 
-    @Value("${llm.default-model:kimi}")
-    private String defaultModel;
+    @Value("${llm.api-key:}")
+    private String apiKey;
 
-    @Value("${llm.local.base-url:http://10.10.38.188:13000/v1}")
-    private String localBaseUrl;
+    @Value("${llm.model:}")
+    private String model;
 
-    @Value("${llm.local.api-key:}")
-    private String localApiKey;
-
-    @Value("${llm.local.models.kimi:ep-20260109161345-br8vg}")
-    private String kimiModel;
-
-    @Value("${llm.local.models.doubao:Doubao-Seed-2.0-Code}")
-    private String doubaoModel;
-
-    @Value("${llm.deepseek.base-url:https://api.deepseek.com}")
-    private String deepSeekBaseUrl;
-
-    @Value("${llm.deepseek.api-key:}")
-    private String deepSeekApiKey;
-
-    @Value("${llm.deepseek.model:deepseek-chat}")
-    private String deepSeekModel;
+    private final RestTemplate restTemplate = new RestTemplate();
+    private final ObjectMapper objectMapper = new ObjectMapper();
 
     public String chat(String prompt, String systemPrompt) {
         return chat(prompt, systemPrompt, null);
     }
 
-    public String chat(String prompt, String systemPrompt, String model) {
-        String actualModel = model != null ? model : getDefaultModel();
-        OpenAiService service = createService();
-        
-        try {
-            ChatMessage systemMessage = new ChatMessage(
-                ChatMessageRole.SYSTEM.value(), 
-                systemPrompt != null ? systemPrompt : "You are a helpful assistant."
-            );
-            ChatMessage userMessage = new ChatMessage(
-                ChatMessageRole.USER.value(), 
-                prompt
-            );
-            
-            ChatCompletionRequest request = ChatCompletionRequest.builder()
-                    .model(actualModel)
-                    .messages(List.of(systemMessage, userMessage))
-                    .maxTokens(2000)
-                    .temperature(0.1)
-                    .build();
+    public String chat(String prompt, String systemPrompt, String overrideModel) {
+        String actualModel = overrideModel != null ? overrideModel : model;
+        String url = (baseUrl.endsWith("/") ? baseUrl : baseUrl + "/") + "chat/completions";
 
-            var response = service.createChatCompletion(request);
-            return response.getChoices().get(0).getMessage().getContent().trim();
+        Map<String, Object> body = Map.of(
+            "model", actualModel,
+            "messages", List.of(
+                Map.of("role", "system", "content", systemPrompt != null ? systemPrompt : "You are a helpful assistant."),
+                Map.of("role", "user", "content", prompt)
+            ),
+            "max_tokens", 2000,
+            "temperature", 0.1
+        );
+
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        headers.setBearerAuth(apiKey);
+
+        try {
+            HttpEntity<Map<String, Object>> entity = new HttpEntity<>(body, headers);
+            ResponseEntity<String> response = restTemplate.exchange(url, HttpMethod.POST, entity, String.class);
+            JsonNode root = objectMapper.readTree(response.getBody());
+            JsonNode content = root.path("choices").path(0).path("message").path("content");
+            if (content.isMissingNode() || content.isNull()) {
+                throw new RuntimeException("LLM response missing content. Raw: " + response.getBody());
+            }
+            return content.asText().trim();
         } catch (Exception e) {
-            log.error("LLM chat failed with model: {}", actualModel, e);
+            log.error("LLM chat failed with model: {}, url: {}", actualModel, url, e);
             throw new RuntimeException("LLM chat failed: " + e.getMessage());
         }
     }
@@ -87,16 +80,60 @@ public class LLMClient {
         String prompt = """
 You are a SQL expert. Convert the natural language question to a SQL query.
 Only use the tables provided in the Schema section.
+Use the exact literal values shown in "Sample rows" — do not invent attribute names or codes.
+
+EAV guidance (entity / attribute-definition / attribute-value tables):
+- To filter rows by a specific attribute, put the attribute-name condition in WHERE,
+  or use INNER JOIN. NEVER put it only in a LEFT JOIN ... ON clause (that does not filter).
+- To return one attribute filtered by another attribute of the same entity, self-join
+  the value table once per attribute. Example:
+    SELECT vp.value AS packaging_size
+    FROM attribute_values vc
+    JOIN attribute_defs dc ON vc.attr_def_id = dc.id AND dc.attr_name = 'code'
+    JOIN attribute_values vp ON vp.product_id = vc.product_id
+    JOIN attribute_defs dp ON vp.attr_def_id = dp.id AND dp.attr_name = 'packaging_size'
+    WHERE vc.value = '12312'
+- If the filter attribute is a plain column on the entity table, filter it there directly
+  and join the value table only for the wanted attribute.
+- If the question gives a bare value (e.g. an id/code/SKU like "12312") WITHOUT naming
+  which attribute it is, locate the entity by matching that value across ANY attribute
+  (filter only on the value, do NOT constrain the filter attribute's name), then return
+  the requested attribute. Example:
+    SELECT vp.value
+    FROM attribute_values vc
+    JOIN attribute_values vp ON vp.product_id = vc.product_id
+    JOIN attribute_defs dp ON vp.attr_def_id = dp.id AND dp.attr_name = 'packaging_size'
+    WHERE vc.value = '12312'
 
 Schema:
 %s
 
 Question: %s
 
-Return ONLY the SQL query, no explanation. %s Always use LIMIT 1000 unless specified otherwise.
+Return ONLY the SQL query, no explanation, no markdown code fences. %s Always use LIMIT 1000 unless specified otherwise.
 """.formatted(schemaContext, question, dialectHint);
 
-        return chat(prompt, "You are a SQL expert. Convert natural language questions to database queries.", null);
+        String raw = chat(prompt, "You are a SQL expert. Convert natural language questions to database queries.", null);
+        return extractSql(raw);
+    }
+
+    static String extractSql(String raw) {
+        if (raw == null) return "";
+        String s = raw.trim();
+        java.util.regex.Matcher fence = java.util.regex.Pattern
+            .compile("```(?:sql|SQL)?\\s*([\\s\\S]*?)```")
+            .matcher(s);
+        if (fence.find()) {
+            s = fence.group(1).trim();
+        }
+        if (s.toLowerCase().startsWith("sql\n") || s.toLowerCase().startsWith("sql ")) {
+            s = s.substring(3).trim();
+        }
+        int semi = s.indexOf(';');
+        if (semi >= 0) {
+            s = s.substring(0, semi);
+        }
+        return s.trim();
     }
 
     public String generateAnswer(String question, String sql, String dataSummary) {
@@ -111,56 +148,5 @@ Provide a concise, natural language answer.
 """.formatted(question, sql, dataSummary);
 
         return chat(prompt, "You are a data analyst. Answer questions based on SQL query results.", null);
-    }
-
-    private OpenAiService createService() {
-        String baseUrl = getBaseUrl();
-        String apiKey = getApiKey();
-        
-        log.debug("Creating LLM service with baseUrl: {}, provider: {}", baseUrl, provider);
-        
-        // 使用正确的构造器
-        return new OpenAiService(apiKey);
-    }
-
-    private String getBaseUrl() {
-        return switch (provider) {
-            case "deepseek" -> deepSeekBaseUrl;
-            case "openai" -> localBaseUrl; // 可以配置为 OpenAI 兼容的代理
-            default -> localBaseUrl; // 本地 Kimi/Doubao
-        };
-    }
-
-    private String getApiKey() {
-        return switch (provider) {
-            case "deepseek" -> deepSeekApiKey;
-            case "openai" -> localApiKey;
-            default -> localApiKey;
-        };
-    }
-
-    private String getDefaultModel() {
-        return switch (defaultModel) {
-            case "kimi" -> kimiModel;
-            case "doubao" -> doubaoModel;
-            case "deepseek" -> deepSeekModel;
-            default -> defaultModel;
-        };
-    }
-
-    public Map<String, String> getAvailableModels() {
-        return Map.of(
-            "kimi", kimiModel,
-            "doubao", doubaoModel,
-            "deepseek", deepSeekModel
-        );
-    }
-
-    public void setProvider(String provider) {
-        this.provider = provider;
-    }
-
-    public void setDefaultModel(String model) {
-        this.defaultModel = model;
     }
 }

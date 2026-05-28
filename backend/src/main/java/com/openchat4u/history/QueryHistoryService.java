@@ -1,8 +1,9 @@
 package com.openchat4u.history;
 
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.metadata.IPage;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import lombok.RequiredArgsConstructor;
-import org.springframework.data.domain.Page;
-import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 
 @Service
@@ -10,24 +11,35 @@ import org.springframework.stereotype.Service;
 public class QueryHistoryService {
     private final QueryHistoryRepository historyRepository;
 
-    public Page<QueryHistory> findByTenant(String tenantCode, Pageable pageable) {
-        return historyRepository.findByTenantCodeOrderByCreatedAtDesc(tenantCode, pageable);
+    public IPage<QueryHistory> findByTenant(String tenantCode, long page, long size) {
+        LambdaQueryWrapper<QueryHistory> wrapper = new LambdaQueryWrapper<QueryHistory>()
+            .eq(QueryHistory::getTenantCode, tenantCode)
+            .orderByDesc(QueryHistory::getCreatedAt);
+        return historyRepository.selectPage(new Page<>(page, size), wrapper);
     }
 
-    public Page<QueryHistory> searchByTenantAndKeyword(String tenantCode, String keyword, Pageable pageable) {
+    public IPage<QueryHistory> searchByTenantAndKeyword(String tenantCode, String keyword, long page, long size) {
         if (keyword == null || keyword.trim().isEmpty()) {
-            return findByTenant(tenantCode, pageable);
+            return findByTenant(tenantCode, page, size);
         }
-        return historyRepository.findByTenantCodeAndQuestionContainingIgnoreCase(tenantCode, keyword, pageable);
+        LambdaQueryWrapper<QueryHistory> wrapper = new LambdaQueryWrapper<QueryHistory>()
+            .eq(QueryHistory::getTenantCode, tenantCode)
+            .like(QueryHistory::getQuestion, keyword)
+            .orderByDesc(QueryHistory::getCreatedAt);
+        return historyRepository.selectPage(new Page<>(page, size), wrapper);
     }
 
     public QueryHistory findById(Long id) {
-        return historyRepository.findById(id)
-            .orElseThrow(() -> new IllegalArgumentException("Query history not found: " + id));
+        QueryHistory h = historyRepository.selectById(id);
+        if (h == null) {
+            throw new IllegalArgumentException("Query history not found: " + id);
+        }
+        return h;
     }
 
     public QueryHistory save(QueryHistory history) {
-        return historyRepository.save(history);
+        historyRepository.insert(history);
+        return history;
     }
 
     public void delete(Long id) {
@@ -35,10 +47,16 @@ public class QueryHistoryService {
     }
 
     public long countByTenant(String tenantCode) {
-        return historyRepository.countByTenantCode(tenantCode);
+        return historyRepository.selectCount(
+            new LambdaQueryWrapper<QueryHistory>().eq(QueryHistory::getTenantCode, tenantCode)
+        );
     }
 
     public long countSuccessByTenant(String tenantCode) {
-        return historyRepository.countByTenantCodeAndIsTrue(tenantCode, true);
+        return historyRepository.selectCount(
+            new LambdaQueryWrapper<QueryHistory>()
+                .eq(QueryHistory::getTenantCode, tenantCode)
+                .eq(QueryHistory::getIsSuccess, true)
+        );
     }
 }

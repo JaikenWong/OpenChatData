@@ -1,11 +1,9 @@
 package com.openchat4u.api;
 
+import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.openchat4u.history.QueryHistory;
 import com.openchat4u.history.QueryHistoryService;
 import lombok.RequiredArgsConstructor;
-import org.springframework.data.domain.Page;
-import org.springframework.data.domain.PageRequest;
-import org.springframework.data.domain.Sort;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.Map;
@@ -18,17 +16,16 @@ public class HistoryController {
     private final QueryHistoryService historyService;
 
     @GetMapping("/{tenantCode}")
-    public Page<QueryHistory> listHistory(
+    public IPage<QueryHistory> listHistory(
             @PathVariable String tenantCode,
-            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "1") int page,
             @RequestParam(defaultValue = "20") int size,
             @RequestParam(required = false) String keyword) {
-        
-        PageRequest pageRequest = PageRequest.of(page, size, Sort.by("createdAt").descending());
+
         if (keyword != null && !keyword.trim().isEmpty()) {
-            return historyService.searchByTenantAndKeyword(tenantCode, keyword, pageRequest);
+            return historyService.searchByTenantAndKeyword(tenantCode, keyword, page, size);
         }
-        return historyService.findByTenant(tenantCode, pageRequest);
+        return historyService.findByTenant(tenantCode, page, size);
     }
 
     @GetMapping("/{tenantCode}/{id}")

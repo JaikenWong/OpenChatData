@@ -1,9 +1,11 @@
 package com.openchat4u.rbac;
 
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.Collections;
 import java.util.List;
 import java.util.stream.Collectors;
 
@@ -16,56 +18,72 @@ public class RBACService {
     private final UserRoleRepository userRoleRepository;
 
     public List<Role> getRolesByTenant(String tenantCode) {
-        return roleRepository.findByTenantCode(tenantCode);
+        return roleRepository.selectList(
+            new LambdaQueryWrapper<Role>().eq(Role::getTenantCode, tenantCode)
+        );
     }
 
     @Transactional
     public Role createRole(Role role) {
-        if (roleRepository.existsByName(role.getName())) {
+        if (existsRoleByName(role.getName())) {
             throw new IllegalArgumentException("Role name already exists: " + role.getName());
         }
-        return roleRepository.save(role);
+        roleRepository.insert(role);
+        return role;
     }
 
     @Transactional
     public Role updateRole(Long id, Role details) {
-        Role role = roleRepository.findById(id)
-            .orElseThrow(() -> new IllegalArgumentException("Role not found: " + id));
+        Role role = roleRepository.selectById(id);
+        if (role == null) {
+            throw new IllegalArgumentException("Role not found: " + id);
+        }
         role.setName(details.getName());
         role.setDescription(details.getDescription());
-        return roleRepository.save(role);
+        roleRepository.updateById(role);
+        return role;
     }
 
     @Transactional
     public void deleteRole(Long id) {
-        rolePermissionRepository.deleteByRoleId(id);
+        rolePermissionRepository.delete(
+            new LambdaQueryWrapper<RolePermission>().eq(RolePermission::getRoleId, id)
+        );
         roleRepository.deleteById(id);
     }
 
     public List<Permission> getAllPermissions() {
-        return permissionRepository.findAll();
+        return permissionRepository.selectList(null);
     }
 
     public List<Permission> getPermissionsByRole(Long roleId) {
-        List<Long> permissionIds = rolePermissionRepository.findPermissionIdsByRoleId(roleId);
-        return permissionRepository.findAllById(permissionIds);
+        List<RolePermission> rps = rolePermissionRepository.selectList(
+            new LambdaQueryWrapper<RolePermission>().eq(RolePermission::getRoleId, roleId)
+        );
+        if (rps.isEmpty()) return Collections.emptyList();
+        List<Long> permissionIds = rps.stream().map(RolePermission::getPermissionId).collect(Collectors.toList());
+        return permissionRepository.selectBatchIds(permissionIds);
     }
 
     @Transactional
     public void assignPermissionsToRole(Long roleId, List<Long> permissionIds) {
-        rolePermissionRepository.deleteByRoleId(roleId);
+        rolePermissionRepository.delete(
+            new LambdaQueryWrapper<RolePermission>().eq(RolePermission::getRoleId, roleId)
+        );
         for (Long permissionId : permissionIds) {
             RolePermission rp = new RolePermission();
             rp.setRoleId(roleId);
             rp.setPermissionId(permissionId);
-            rolePermissionRepository.save(rp);
+            rolePermissionRepository.insert(rp);
         }
     }
 
     public List<Role> getRolesByUser(Long userId) {
-        List<UserRole> userRoles = userRoleRepository.findByUserId(userId);
+        List<UserRole> userRoles = userRoleRepository.selectList(
+            new LambdaQueryWrapper<UserRole>().eq(UserRole::getUserId, userId)
+        );
         return userRoles.stream()
-            .map(ur -> roleRepository.findById(ur.getRoleId()).orElse(null))
+            .map(ur -> roleRepository.selectById(ur.getRoleId()))
             .filter(r -> r != null)
             .collect(Collectors.toList());
     }
@@ -76,12 +94,16 @@ public class RBACService {
         ur.setUserId(userId);
         ur.setRoleId(roleId);
         ur.setTenantCode(tenantCode);
-        userRoleRepository.save(ur);
+        userRoleRepository.insert(ur);
     }
 
     @Transactional
     public void removeRoleFromUser(Long userId, Long roleId) {
-        userRoleRepository.deleteByUserIdAndRoleId(userId, roleId);
+        userRoleRepository.delete(
+            new LambdaQueryWrapper<UserRole>()
+                .eq(UserRole::getUserId, userId)
+                .eq(UserRole::getRoleId, roleId)
+        );
     }
 
     public List<Permission> getPermissionsByUser(Long userId) {
@@ -98,26 +120,30 @@ public class RBACService {
     }
 
     public void initializeDefaultRoles() {
-        if (!roleRepository.existsByName("ADMIN")) {
+        if (!existsRoleByName("ADMIN")) {
             Role admin = new Role();
             admin.setName("ADMIN");
             admin.setDescription("System Administrator");
             admin.setIsSystem(true);
-            roleRepository.save(admin);
+            roleRepository.insert(admin);
         }
-        if (!roleRepository.existsByName("DATA_ANALYST")) {
+        if (!existsRoleByName("DATA_ANALYST")) {
             Role analyst = new Role();
             analyst.setName("DATA_ANALYST");
             analyst.setDescription("Data Analyst - Can query and view history");
             analyst.setIsSystem(true);
-            roleRepository.save(analyst);
+            roleRepository.insert(analyst);
         }
-        if (!roleRepository.existsByName("VIEWER")) {
+        if (!existsRoleByName("VIEWER")) {
             Role viewer = new Role();
             viewer.setName("VIEWER");
             viewer.setDescription("Viewer - Can only view history");
             viewer.setIsSystem(true);
-            roleRepository.save(viewer);
+            roleRepository.insert(viewer);
         }
+    }
+
+    private boolean existsRoleByName(String name) {
+        return roleRepository.exists(new LambdaQueryWrapper<Role>().eq(Role::getName, name));
     }
 }

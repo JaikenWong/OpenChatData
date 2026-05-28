@@ -1,62 +1,35 @@
 package com.openchat4u.tenant;
 
-import jakarta.persistence.*;
+import com.baomidou.mybatisplus.annotation.FieldFill;
+import com.baomidou.mybatisplus.annotation.IdType;
+import com.baomidou.mybatisplus.annotation.TableField;
+import com.baomidou.mybatisplus.annotation.TableId;
+import com.baomidou.mybatisplus.annotation.TableName;
 import lombok.Data;
+
 import java.time.LocalDateTime;
 
 @Data
-@Entity
-@Table(name = "tenants")
+@TableName("tenants")
 public class Tenant {
-    @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    @TableId(type = IdType.AUTO)
     private Long id;
 
-    @Column(nullable = false, unique = true)
     private String name;
-
-    @Column(nullable = false, unique = true)
     private String code;
-
     private String description;
-
-    @Column(nullable = false)
     private String dbType;
-
-    @Column(nullable = false)
     private String jdbcUrl;
-
-    @Column(nullable = false)
     private String username;
-
-    @Column(nullable = false)
     private String password;
-
-    @Column(name = "read_only", nullable = false)
     private Boolean readOnly = true;
-
     private String status = "ACTIVE";
-
-    @Column(name = "max_connections")
     private Integer maxConnections = 5;
-
-    @Column(name = "connection_timeout")
     private Integer connectionTimeout = 10000;
 
-    @Column(name = "created_at")
+    @TableField(fill = FieldFill.INSERT)
     private LocalDateTime createdAt;
 
-    @Column(name = "updated_at")
+    @TableField(fill = FieldFill.INSERT_UPDATE)
     private LocalDateTime updatedAt;
-
-    @PrePersist
-    protected void onCreate() {
-        createdAt = LocalDateTime.now();
-        updatedAt = LocalDateTime.now();
-    }
-
-    @PreUpdate
-    protected void onUpdate() {
-        updatedAt = LocalDateTime.now();
-    }
 }

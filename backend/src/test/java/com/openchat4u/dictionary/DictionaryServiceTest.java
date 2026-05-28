@@ -1,16 +1,17 @@
 package com.openchat4u.dictionary;
 
-import org.junit.jupiter.api.Test;
+import com.baomidou.mybatisplus.core.conditions.Wrapper;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.util.Arrays;
-import java.util.Collections;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
@@ -34,14 +35,13 @@ class DictionaryServiceTest {
             createDictionary(1L, tenantCode, type, "销售额", "营收,收入"),
             createDictionary(2L, tenantCode, type, "用户", "客户")
         );
-        
-        when(dictionaryRepository.findByTenantCodeAndTypeAndIsActiveTrue(tenantCode, type))
-            .thenReturn(expected);
+
+        when(dictionaryRepository.selectList(any(Wrapper.class))).thenReturn(expected);
 
         List<Dictionary> result = dictionaryService.findByTenantAndType(tenantCode, type);
 
         assertEquals(2, result.size());
-        verify(dictionaryRepository).findByTenantCodeAndTypeAndIsActiveTrue(tenantCode, type);
+        verify(dictionaryRepository).selectList(any(Wrapper.class));
     }
 
     @Test
@@ -51,14 +51,13 @@ class DictionaryServiceTest {
             createDictionary(1L, tenantCode, "SYNONYM", "销售额", "营收"),
             createDictionary(2L, tenantCode, "BUSINESS_TERM", "GMV", "成交总额")
         );
-        
-        when(dictionaryRepository.findByTenantCodeAndIsActiveTrue(tenantCode))
-            .thenReturn(expected);
+
+        when(dictionaryRepository.selectList(any(Wrapper.class))).thenReturn(expected);
 
         List<Dictionary> result = dictionaryService.findByTenant(tenantCode);
 
         assertEquals(2, result.size());
-        verify(dictionaryRepository).findByTenantCodeAndIsActiveTrue(tenantCode);
+        verify(dictionaryRepository).selectList(any(Wrapper.class));
     }
 
     @Test
@@ -68,20 +67,19 @@ class DictionaryServiceTest {
         List<Dictionary> expected = List.of(
             createDictionary(1L, tenantCode, "SYNONYM", "销售额", "营收")
         );
-        
-        when(dictionaryRepository.findByTenantCodeAndTermContainingIgnoreCaseAndIsActiveTrue(tenantCode, term))
-            .thenReturn(expected);
+
+        when(dictionaryRepository.selectList(any(Wrapper.class))).thenReturn(expected);
 
         List<Dictionary> result = dictionaryService.searchByTenantAndTerm(tenantCode, term);
 
         assertEquals(1, result.size());
-        verify(dictionaryRepository).findByTenantCodeAndTermContainingIgnoreCaseAndIsActiveTrue(tenantCode, term);
+        verify(dictionaryRepository).selectList(any(Wrapper.class));
     }
 
     @Test
     void testFindById() {
         Dictionary expected = createDictionary(1L, "tenant1", "SYNONYM", "销售额", "营收");
-        when(dictionaryRepository.findById(1L)).thenReturn(java.util.Optional.of(expected));
+        when(dictionaryRepository.selectById(1L)).thenReturn(expected);
 
         Dictionary result = dictionaryService.findById(1L);
 
@@ -91,7 +89,7 @@ class DictionaryServiceTest {
 
     @Test
     void testFindByIdNotFound() {
-        when(dictionaryRepository.findById(999L)).thenReturn(java.util.Optional.empty());
+        when(dictionaryRepository.selectById(999L)).thenReturn(null);
 
         assertThrows(IllegalArgumentException.class, () -> dictionaryService.findById(999L));
     }
@@ -99,29 +97,27 @@ class DictionaryServiceTest {
     @Test
     void testCreate() {
         Dictionary newDict = createDictionary(null, "tenant1", "SYNONYM", "新术语", "同义词1,同义词2");
-        when(dictionaryRepository.existsByTenantCodeAndTypeAndTerm("tenant1", "SYNONYM", "新术语"))
-            .thenReturn(false);
-        when(dictionaryRepository.save(any(Dictionary.class))).thenAnswer(invocation -> {
+        when(dictionaryRepository.exists(any(Wrapper.class))).thenReturn(false);
+        when(dictionaryRepository.insert(any(Dictionary.class))).thenAnswer(invocation -> {
             Dictionary d = invocation.getArgument(0);
             d.setId(1L);
-            return d;
+            return 1;
         });
 
         Dictionary result = dictionaryService.create(newDict);
 
         assertNotNull(result);
         assertEquals(1L, result.getId());
-        verify(dictionaryRepository).save(newDict);
+        verify(dictionaryRepository).insert(newDict);
     }
 
     @Test
     void testCreateDuplicate() {
         Dictionary newDict = createDictionary(null, "tenant1", "SYNONYM", "已存在", "同义词");
-        when(dictionaryRepository.existsByTenantCodeAndTypeAndTerm("tenant1", "SYNONYM", "已存在"))
-            .thenReturn(true);
+        when(dictionaryRepository.exists(any(Wrapper.class))).thenReturn(true);
 
         assertThrows(IllegalArgumentException.class, () -> dictionaryService.create(newDict));
-        verify(dictionaryRepository, never()).save(any());
+        verify(dictionaryRepository, never()).insert(any(Dictionary.class));
     }
 
     @Test
@@ -129,39 +125,39 @@ class DictionaryServiceTest {
         Dictionary existing = createDictionary(1L, "tenant1", "SYNONYM", "旧术语", "旧同义词");
         Dictionary details = createDictionary(null, "tenant1", "SYNONYM", "新术语", "新同义词");
         details.setDescription("新描述");
-        
-        when(dictionaryRepository.findById(1L)).thenReturn(java.util.Optional.of(existing));
-        when(dictionaryRepository.save(any(Dictionary.class))).thenReturn(existing);
+
+        when(dictionaryRepository.selectById(1L)).thenReturn(existing);
+        when(dictionaryRepository.updateById(any(Dictionary.class))).thenReturn(1);
 
         Dictionary result = dictionaryService.update(1L, details);
 
         assertEquals("新术语", existing.getTerm());
         assertEquals("新同义词", existing.getSynonyms());
         assertEquals("新描述", existing.getDescription());
+        assertSame(existing, result);
     }
 
     @Test
     void testDelete() {
         Dictionary existing = createDictionary(1L, "tenant1", "SYNONYM", "术语", "同义词");
-        when(dictionaryRepository.findById(1L)).thenReturn(java.util.Optional.of(existing));
-        when(dictionaryRepository.save(any(Dictionary.class))).thenReturn(existing);
+        when(dictionaryRepository.selectById(1L)).thenReturn(existing);
+        when(dictionaryRepository.updateById(any(Dictionary.class))).thenReturn(1);
 
         dictionaryService.delete(1L);
 
         assertFalse(existing.getIsActive());
-        verify(dictionaryRepository).save(existing);
+        verify(dictionaryRepository).updateById(existing);
     }
 
     @Test
     void testEnhanceQuestion() {
         String tenantCode = "tenant1";
         String question = "查询上个月的营收情况";
-        
+
         Dictionary dict = createDictionary(1L, tenantCode, "SYNONYM", "销售额", "营收,收入");
         dict.setIsActive(true);
-        
-        when(dictionaryRepository.findByTenantCodeAndIsActiveTrue(tenantCode))
-            .thenReturn(List.of(dict));
+
+        when(dictionaryRepository.selectList(any(Wrapper.class))).thenReturn(List.of(dict));
 
         String result = dictionaryService.enhanceQuestion(tenantCode, question);
 
@@ -172,14 +168,13 @@ class DictionaryServiceTest {
     void testEnhanceQuestionMultipleSynonyms() {
         String tenantCode = "tenant1";
         String question = "统计收入和用户数量";
-        
+
         Dictionary dict1 = createDictionary(1L, tenantCode, "SYNONYM", "销售额", "营收,收入");
         dict1.setIsActive(true);
         Dictionary dict2 = createDictionary(2L, tenantCode, "SYNONYM", "客户", "用户,顾客");
         dict2.setIsActive(true);
-        
-        when(dictionaryRepository.findByTenantCodeAndIsActiveTrue(tenantCode))
-            .thenReturn(List.of(dict1, dict2));
+
+        when(dictionaryRepository.selectList(any(Wrapper.class))).thenReturn(List.of(dict1, dict2));
 
         String result = dictionaryService.enhanceQuestion(tenantCode, question);
 
@@ -190,12 +185,11 @@ class DictionaryServiceTest {
     void testEnhanceQuestionNoMatch() {
         String tenantCode = "tenant1";
         String question = "查询订单数据";
-        
+
         Dictionary dict = createDictionary(1L, tenantCode, "SYNONYM", "销售额", "营收");
         dict.setIsActive(true);
-        
-        when(dictionaryRepository.findByTenantCodeAndIsActiveTrue(tenantCode))
-            .thenReturn(List.of(dict));
+
+        when(dictionaryRepository.selectList(any(Wrapper.class))).thenReturn(List.of(dict));
 
         String result = dictionaryService.enhanceQuestion(tenantCode, question);
 
@@ -206,12 +200,11 @@ class DictionaryServiceTest {
     void testEnhanceQuestionWithSpecialCharacters() {
         String tenantCode = "tenant1";
         String question = "查询营收 (含税) 数据";
-        
+
         Dictionary dict = createDictionary(1L, tenantCode, "SYNONYM", "销售额", "营收");
         dict.setIsActive(true);
-        
-        when(dictionaryRepository.findByTenantCodeAndIsActiveTrue(tenantCode))
-            .thenReturn(List.of(dict));
+
+        when(dictionaryRepository.selectList(any(Wrapper.class))).thenReturn(List.of(dict));
 
         String result = dictionaryService.enhanceQuestion(tenantCode, question);
 
@@ -222,12 +215,11 @@ class DictionaryServiceTest {
     void testEnhanceQuestionEmptySynonyms() {
         String tenantCode = "tenant1";
         String question = "查询营收数据";
-        
+
         Dictionary dict = createDictionary(1L, tenantCode, "SYNONYM", "销售额", "");
         dict.setIsActive(true);
-        
-        when(dictionaryRepository.findByTenantCodeAndIsActiveTrue(tenantCode))
-            .thenReturn(List.of(dict));
+
+        when(dictionaryRepository.selectList(any(Wrapper.class))).thenReturn(List.of(dict));
 
         String result = dictionaryService.enhanceQuestion(tenantCode, question);
 
@@ -238,12 +230,11 @@ class DictionaryServiceTest {
     void testEnhanceQuestionNullSynonyms() {
         String tenantCode = "tenant1";
         String question = "查询营收数据";
-        
+
         Dictionary dict = createDictionary(1L, tenantCode, "SYNONYM", "销售额", null);
         dict.setIsActive(true);
-        
-        when(dictionaryRepository.findByTenantCodeAndIsActiveTrue(tenantCode))
-            .thenReturn(List.of(dict));
+
+        when(dictionaryRepository.selectList(any(Wrapper.class))).thenReturn(List.of(dict));
 
         String result = dictionaryService.enhanceQuestion(tenantCode, question);
 
@@ -254,12 +245,11 @@ class DictionaryServiceTest {
     void testEnhanceQuestionCaseInsensitive() {
         String tenantCode = "tenant1";
         String question = "查询 YINGSOU 数据";
-        
+
         Dictionary dict = createDictionary(1L, tenantCode, "SYNONYM", "销售额", "营收");
         dict.setIsActive(true);
-        
-        when(dictionaryRepository.findByTenantCodeAndIsActiveTrue(tenantCode))
-            .thenReturn(List.of(dict));
+
+        when(dictionaryRepository.selectList(any(Wrapper.class))).thenReturn(List.of(dict));
 
         String result = dictionaryService.enhanceQuestion(tenantCode, question);
 

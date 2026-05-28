@@ -1,14 +1,8 @@
 package com.openchat4u.rbac;
 
-import org.springframework.data.jpa.repository.JpaRepository;
-import org.springframework.data.jpa.repository.Query;
-import java.util.List;
+import com.baomidou.mybatisplus.core.mapper.BaseMapper;
+import org.apache.ibatis.annotations.Mapper;
 
-public interface RolePermissionRepository extends JpaRepository<RolePermission, Long> {
-    List<RolePermission> findByRoleId(Long roleId);
-    
-    @Query("SELECT rp.permissionId FROM RolePermission rp WHERE rp.roleId = ?1")
-    List<Long> findPermissionIdsByRoleId(Long roleId);
-    
-    void deleteByRoleId(Long roleId);
+@Mapper
+public interface RolePermissionRepository extends BaseMapper<RolePermission> {
 }

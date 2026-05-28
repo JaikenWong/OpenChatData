@@ -1,31 +1,24 @@
 package com.openchat4u.rbac;
 
-import jakarta.persistence.*;
+import com.baomidou.mybatisplus.annotation.FieldFill;
+import com.baomidou.mybatisplus.annotation.IdType;
+import com.baomidou.mybatisplus.annotation.TableField;
+import com.baomidou.mybatisplus.annotation.TableId;
+import com.baomidou.mybatisplus.annotation.TableName;
 import lombok.Data;
+
 import java.time.LocalDateTime;
 
 @Data
-@Entity
-@Table(name = "user_roles")
+@TableName("user_roles")
 public class UserRole {
-    @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    @TableId(type = IdType.AUTO)
     private Long id;
 
-    @Column(name = "user_id", nullable = false)
     private Long userId;
-
-    @Column(name = "role_id", nullable = false)
     private Long roleId;
-
-    @Column(name = "tenant_code")
     private String tenantCode;
 
-    @Column(name = "created_at")
+    @TableField(fill = FieldFill.INSERT)
     private LocalDateTime createdAt;
-
-    @PrePersist
-    protected void onCreate() {
-        createdAt = LocalDateTime.now();
-    }
 }

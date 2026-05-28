@@ -1,9 +1,11 @@
 package com.openchat4u.audit;
 
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.metadata.IPage;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import lombok.RequiredArgsConstructor;
-import org.springframework.data.domain.Page;
-import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
+
 import java.time.LocalDateTime;
 
 @Service
@@ -11,23 +13,37 @@ import java.time.LocalDateTime;
 public class AuditLogService {
     private final AuditLogRepository auditLogRepository;
 
-    public Page<AuditLog> findByTenant(String tenantCode, Pageable pageable) {
-        return auditLogRepository.findByTenantCodeOrderByCreatedAtDesc(tenantCode, pageable);
+    public IPage<AuditLog> findByTenant(String tenantCode, long page, long size) {
+        LambdaQueryWrapper<AuditLog> wrapper = new LambdaQueryWrapper<AuditLog>()
+            .eq(AuditLog::getTenantCode, tenantCode)
+            .orderByDesc(AuditLog::getCreatedAt);
+        return auditLogRepository.selectPage(new Page<>(page, size), wrapper);
     }
 
-    public Page<AuditLog> findByTenantAndAction(String tenantCode, String action, Pageable pageable) {
-        return auditLogRepository.findByTenantCodeAndActionOrderByCreatedAtDesc(tenantCode, action, pageable);
+    public IPage<AuditLog> findByTenantAndAction(String tenantCode, String action, long page, long size) {
+        LambdaQueryWrapper<AuditLog> wrapper = new LambdaQueryWrapper<AuditLog>()
+            .eq(AuditLog::getTenantCode, tenantCode)
+            .eq(AuditLog::getAction, action)
+            .orderByDesc(AuditLog::getCreatedAt);
+        return auditLogRepository.selectPage(new Page<>(page, size), wrapper);
     }
 
-    public Page<AuditLog> findByTenantAndDateRange(String tenantCode, LocalDateTime start, LocalDateTime end, Pageable pageable) {
-        return auditLogRepository.findByTenantCodeAndCreatedAtBetweenOrderByCreatedAtDesc(tenantCode, start, end, pageable);
+    public IPage<AuditLog> findByTenantAndDateRange(String tenantCode, LocalDateTime start, LocalDateTime end, long page, long size) {
+        LambdaQueryWrapper<AuditLog> wrapper = new LambdaQueryWrapper<AuditLog>()
+            .eq(AuditLog::getTenantCode, tenantCode)
+            .between(AuditLog::getCreatedAt, start, end)
+            .orderByDesc(AuditLog::getCreatedAt);
+        return auditLogRepository.selectPage(new Page<>(page, size), wrapper);
     }
 
     public AuditLog save(AuditLog log) {
-        return auditLogRepository.save(log);
+        auditLogRepository.insert(log);
+        return log;
     }
 
     public long countByTenant(String tenantCode) {
-        return auditLogRepository.countByTenantCode(tenantCode);
+        return auditLogRepository.selectCount(
+            new LambdaQueryWrapper<AuditLog>().eq(AuditLog::getTenantCode, tenantCode)
+        );
     }
 }

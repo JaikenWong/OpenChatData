@@ -1,9 +1,8 @@
 package com.openchat4u.tenant;
 
-import org.springframework.data.jpa.repository.JpaRepository;
-import java.util.Optional;
+import com.baomidou.mybatisplus.core.mapper.BaseMapper;
+import org.apache.ibatis.annotations.Mapper;
 
-public interface TenantRepository extends JpaRepository<Tenant, Long> {
-    Optional<Tenant> findByCode(String code);
-    boolean existsByCode(String code);
+@Mapper
+public interface TenantRepository extends BaseMapper<Tenant> {
 }

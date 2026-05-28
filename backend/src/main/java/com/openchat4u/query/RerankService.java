@@ -14,16 +14,23 @@ import java.util.*;
 @Slf4j
 public class RerankService {
 
+    @Value("${rerank.enabled:false}")
+    private boolean enabled;
+
     @Value("${rerank.api-key:}")
     private String rerankApiKey;
 
     @Value("${rerank.base-url:https://maas-api.cn-huabei-1.xf-yun.com/v2/rerank}")
     private String rerankBaseUrl;
 
-    @Value("${rerank.model:xop3qwen8bembedding}")
+    @Value("${rerank.model:}")
     private String rerankModel;
 
     private final RestTemplate restTemplate = new RestTemplate();
+
+    public boolean isEnabled() {
+        return enabled;
+    }
 
     /**
      * 对检索到的表结构进行重排序，返回最相关的表
@@ -32,6 +39,9 @@ public class RerankService {
      * @return 重排序后的结果，按相关性降序
      */
     public List<RerankResult> rerank(String query, List<String> documents) {
+        if (!enabled) {
+            return fallbackOriginalOrder(documents);
+        }
         try {
             HttpHeaders headers = new HttpHeaders();
             headers.set("Authorization", "Bearer " + rerankApiKey);
@@ -53,7 +63,16 @@ public class RerankService {
                 RerankResult r = new RerankResult();
                 r.setIndex((Integer) result.get("index"));
                 r.setRelevanceScore(((Number) result.get("relevance_score")).doubleValue());
-                r.setText((String) result.get("text"));
+                Object textVal = result.get("text");
+                if (textVal == null) {
+                    Object doc = result.get("document");
+                    if (doc instanceof Map<?, ?> docMap) {
+                        textVal = docMap.get("text");
+                    } else if (doc instanceof String docStr) {
+                        textVal = docStr;
+                    }
+                }
+                r.setText(textVal != null ? textVal.toString() : null);
                 rerankResults.add(r);
             }
 
@@ -62,18 +81,21 @@ public class RerankService {
             return rerankResults;
 
         } catch (Exception e) {
-            log.error("Rerank failed", e);
-            // 返回原始顺序
-            List<RerankResult> fallback = new ArrayList<>();
-            for (int i = 0; i < documents.size(); i++) {
-                RerankResult r = new RerankResult();
-                r.setIndex(i);
-                r.setRelevanceScore(0.0);
-                r.setText(documents.get(i));
-                fallback.add(r);
-            }
-            return fallback;
+            log.warn("Rerank failed: {}", e.getMessage());
+            return fallbackOriginalOrder(documents);
         }
+    }
+
+    private List<RerankResult> fallbackOriginalOrder(List<String> documents) {
+        List<RerankResult> fallback = new ArrayList<>();
+        for (int i = 0; i < documents.size(); i++) {
+            RerankResult r = new RerankResult();
+            r.setIndex(i);
+            r.setRelevanceScore(0.0);
+            r.setText(documents.get(i));
+            fallback.add(r);
+        }
+        return fallback;
     }
 
     public static class RerankResult {

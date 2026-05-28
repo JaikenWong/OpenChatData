@@ -1,4 +1,4 @@
-package com.openchat4u.masking;
+package com.openchat4u.auth;
 
 import com.baomidou.mybatisplus.annotation.FieldFill;
 import com.baomidou.mybatisplus.annotation.IdType;
@@ -10,18 +10,24 @@ import lombok.Data;
 import java.time.LocalDateTime;
 
 @Data
-@TableName("data_masking_rules")
-public class DataMaskingRule {
+@TableName("users")
+public class User {
     @TableId(type = IdType.AUTO)
     private Long id;
 
+    private String username;
+    private String passwordHash;
     private String tenantCode;
-    private String tableName;
-    private String columnName;
-    private String maskType;
-    private String maskPattern;
-    private Boolean isActive = true;
+    private String displayName;
+    private String email;
+    private String status;
+    private Integer loginAttempts;
+    private LocalDateTime lockedUntil;
+    private LocalDateTime lastLoginAt;
 
     @TableField(fill = FieldFill.INSERT)
     private LocalDateTime createdAt;
+
+    @TableField(fill = FieldFill.INSERT_UPDATE)
+    private LocalDateTime updatedAt;
 }

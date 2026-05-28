@@ -1,7 +1,10 @@
 package com.openchat4u.tenant;
 
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.openchat4u.util.EncryptionUtil;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+
 import java.util.List;
 import java.util.Optional;
 
@@ -9,30 +12,40 @@ import java.util.Optional;
 @RequiredArgsConstructor
 public class TenantService {
     private final TenantRepository tenantRepository;
+    private final EncryptionUtil encryptionUtil;
 
     public List<Tenant> findAll() {
-        return tenantRepository.findAll();
+        List<Tenant> all = tenantRepository.selectList(null);
+        all.forEach(this::decryptPassword);
+        return all;
     }
 
     public Optional<Tenant> findById(Long id) {
-        return tenantRepository.findById(id);
+        return Optional.ofNullable(tenantRepository.selectById(id)).map(this::decryptPassword);
     }
 
     public Optional<Tenant> findByCode(String code) {
-        return tenantRepository.findByCode(code);
+        return Optional.ofNullable(
+            tenantRepository.selectOne(new LambdaQueryWrapper<Tenant>().eq(Tenant::getCode, code))
+        ).map(this::decryptPassword);
     }
 
     public Tenant create(Tenant tenant) {
-        if (tenantRepository.existsByCode(tenant.getCode())) {
+        if (existsByCode(tenant.getCode())) {
             throw new IllegalArgumentException("Tenant code already exists: " + tenant.getCode());
         }
         tenant.setReadOnly(true);
-        return tenantRepository.save(tenant);
+        tenant.setPassword(encryptionUtil.encrypt(tenant.getPassword()));
+        tenantRepository.insert(tenant);
+        decryptPassword(tenant);
+        return tenant;
     }
 
     public Tenant update(Long id, Tenant details) {
-        Tenant tenant = tenantRepository.findById(id)
-            .orElseThrow(() -> new IllegalArgumentException("Tenant not found: " + id));
+        Tenant tenant = tenantRepository.selectById(id);
+        if (tenant == null) {
+            throw new IllegalArgumentException("Tenant not found: " + id);
+        }
 
         tenant.setName(details.getName());
         tenant.setDescription(details.getDescription());
@@ -40,7 +53,7 @@ public class TenantService {
         tenant.setJdbcUrl(details.getJdbcUrl());
         tenant.setUsername(details.getUsername());
         if (details.getPassword() != null && !details.getPassword().isEmpty()) {
-            tenant.setPassword(details.getPassword());
+            tenant.setPassword(encryptionUtil.encrypt(details.getPassword()));
         }
         tenant.setStatus(details.getStatus());
         if (details.getMaxConnections() != null) {
@@ -50,7 +63,9 @@ public class TenantService {
             tenant.setConnectionTimeout(details.getConnectionTimeout());
         }
 
-        return tenantRepository.save(tenant);
+        tenantRepository.updateById(tenant);
+        decryptPassword(tenant);
+        return tenant;
     }
 
     public void delete(Long id) {
@@ -58,6 +73,13 @@ public class TenantService {
     }
 
     public boolean existsByCode(String code) {
-        return tenantRepository.existsByCode(code);
+        return tenantRepository.exists(new LambdaQueryWrapper<Tenant>().eq(Tenant::getCode, code));
+    }
+
+    private Tenant decryptPassword(Tenant tenant) {
+        if (tenant != null && tenant.getPassword() != null) {
+            tenant.setPassword(encryptionUtil.decrypt(tenant.getPassword()));
+        }
+        return tenant;
     }
 }

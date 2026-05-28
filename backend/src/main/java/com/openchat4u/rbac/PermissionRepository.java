@@ -1,9 +1,8 @@
 package com.openchat4u.rbac;
 
-import org.springframework.data.jpa.repository.JpaRepository;
-import java.util.List;
+import com.baomidou.mybatisplus.core.mapper.BaseMapper;
+import org.apache.ibatis.annotations.Mapper;
 
-public interface PermissionRepository extends JpaRepository<Permission, Long> {
-    List<Permission> findByResourceType(String resourceType);
-    List<Permission> findByAction(String action);
+@Mapper
+public interface PermissionRepository extends BaseMapper<Permission> {
 }
