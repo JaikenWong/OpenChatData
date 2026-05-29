@@ -8,6 +8,7 @@ import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 
 @RestController
 @RequestMapping("/api/admin/tenants")
@@ -19,13 +20,17 @@ public class TenantController {
 
     @GetMapping
     public List<Tenant> listTenants() {
-        return tenantService.findAll();
+        return tenantService.findAll().stream()
+            .map(TenantController::maskPassword)
+            .collect(Collectors.toList());
     }
 
     @GetMapping("/{id}")
     public Tenant getTenant(@PathVariable Long id) {
-        return tenantService.findById(id)
-            .orElseThrow(() -> new IllegalArgumentException("Tenant not found: " + id));
+        return maskPassword(
+            tenantService.findById(id)
+                .orElseThrow(() -> new IllegalArgumentException("Tenant not found: " + id))
+        );
     }
 
     @PostMapping
@@ -40,7 +45,7 @@ public class TenantController {
             created.getMaxConnections() != null ? created.getMaxConnections() : 5,
             created.getConnectionTimeout() != null ? created.getConnectionTimeout() : 10000
         );
-        return created;
+        return maskPassword(created);
     }
 
     @PutMapping("/{id}")
@@ -56,7 +61,7 @@ public class TenantController {
             updated.getMaxConnections() != null ? updated.getMaxConnections() : 5,
             updated.getConnectionTimeout() != null ? updated.getConnectionTimeout() : 10000
         );
-        return updated;
+        return maskPassword(updated);
     }
 
     @DeleteMapping("/{id}")
@@ -97,5 +102,28 @@ public class TenantController {
             Map.of("value", "ORACLE", "label", "Oracle"),
             Map.of("value", "SQLSERVER", "label", "SQL Server")
         );
+    }
+
+    /**
+     * Returns a shallow copy of the tenant with the password field masked.
+     * Original entity is left untouched to avoid corrupting cached/persisted state.
+     */
+    private static Tenant maskPassword(Tenant t) {
+        Tenant copy = new Tenant();
+        copy.setId(t.getId());
+        copy.setName(t.getName());
+        copy.setCode(t.getCode());
+        copy.setDescription(t.getDescription());
+        copy.setDbType(t.getDbType());
+        copy.setJdbcUrl(t.getJdbcUrl());
+        copy.setUsername(t.getUsername());
+        copy.setPassword(t.getPassword() != null && !t.getPassword().isEmpty() ? "********" : null);
+        copy.setReadOnly(t.getReadOnly());
+        copy.setStatus(t.getStatus());
+        copy.setMaxConnections(t.getMaxConnections());
+        copy.setConnectionTimeout(t.getConnectionTimeout());
+        copy.setCreatedAt(t.getCreatedAt());
+        copy.setUpdatedAt(t.getUpdatedAt());
+        return copy;
     }
 }

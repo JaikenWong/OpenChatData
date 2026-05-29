@@ -6,6 +6,11 @@ import com.openchat4u.schema.SchemaService;
 import com.openchat4u.schema.TableSchema;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import net.sf.jsqlparser.JSQLParserException;
+import net.sf.jsqlparser.parser.CCJSqlParserUtil;
+import net.sf.jsqlparser.statement.Statement;
+import net.sf.jsqlparser.statement.select.Select;
+import net.sf.jsqlparser.statement.select.WithItem;
 import org.springframework.stereotype.Service;
 import org.springframework.jdbc.core.JdbcTemplate;
 
@@ -136,18 +141,56 @@ public class QueryService {
         return sb.toString();
     }
 
-    // Word-boundary match so column names like created_at / updated_at don't
-    // trip the CREATE / UPDATE guards.
-    private static final java.util.regex.Pattern WRITE_KEYWORD = java.util.regex.Pattern.compile(
-        "\\b(DROP|TRUNCATE|DELETE|INSERT|UPDATE|ALTER|CREATE|GRANT|REVOKE|MERGE|CALL)\\b",
-        java.util.regex.Pattern.CASE_INSENSITIVE);
-
+    /**
+     * AST-based read-only SQL validation using JSqlParser.
+     * Only pure SELECT (including CTE/WITH) passes.
+     * SHOW/DESCRIBE/EXPLAIN intentionally rejected: they cannot be safely
+     * parsed and inline comments (e.g. MySQL /*!50000 ...*​/) can smuggle
+     * write statements past regex-only checks.
+     */
     private boolean isValidReadOnlySQL(String sql) {
-        String upper = sql.toUpperCase().trim();
-        boolean isReadOnly = upper.startsWith("SELECT") || upper.startsWith("WITH") ||
-               upper.startsWith("SHOW") || upper.startsWith("DESCRIBE") || upper.startsWith("EXPLAIN");
+        String trimmed = sql.trim();
+        // Strip trailing semicolons (LLM sometimes adds them)
+        while (trimmed.endsWith(";")) {
+            trimmed = trimmed.substring(0, trimmed.length() - 1).trim();
+        }
+        // Reject multi-statement: any non-quoted semicolon means multiple statements
+        if (containsUnquotedSemicolon(trimmed)) {
+            log.warn("Rejected multi-statement SQL");
+            return false;
+        }
+        try {
+            Statement stmt = CCJSqlParserUtil.parse(trimmed);
+            if (!(stmt instanceof Select)) {
+                log.warn("Rejected non-SELECT statement: {}", stmt.getClass().getSimpleName());
+                return false;
+            }
+            Select select = (Select) stmt;
+            // Ensure every CTE is itself a Select (no INSERT/UPDATE/DELETE CTEs)
+            if (select.getWithItemsList() != null) {
+                for (WithItem item : select.getWithItemsList()) {
+                    if (!(item.getSelect() instanceof Select)) {
+                        log.warn("CTE contains non-SELECT: {}", item);
+                        return false;
+                    }
+                }
+            }
+            return true;
+        } catch (JSQLParserException e) {
+            log.warn("SQL parse failed, rejecting: {}", e.getMessage());
+            return false;
+        }
+    }
 
-        return isReadOnly && !WRITE_KEYWORD.matcher(sql).find();
+    private boolean containsUnquotedSemicolon(String sql) {
+        boolean inSingle = false, inDouble = false;
+        for (int i = 0; i < sql.length(); i++) {
+            char c = sql.charAt(i);
+            if (c == '\'' && !inDouble) inSingle = !inSingle;
+            else if (c == '"' && !inSingle) inDouble = !inDouble;
+            else if (c == ';' && !inSingle && !inDouble) return true;
+        }
+        return false;
     }
 
     private List<Map<String, Object>> executeSQL(JdbcTemplate jdbcTemplate, String sql) {

@@ -1,11 +1,13 @@
 package com.openchat4u.query;
 
 import com.openchat4u.auth.JwtTokenProvider;
+import com.openchat4u.auth.TenantContext;
 import com.openchat4u.chart.ChartService;
 import com.openchat4u.dictionary.DictionaryService;
 import com.openchat4u.history.QueryHistory;
 import com.openchat4u.history.QueryHistoryService;
 import com.openchat4u.masking.DataMaskingService;
+import com.openchat4u.rbac.RBACService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.*;
@@ -25,6 +27,7 @@ public class QueryController {
     private final QueryHistoryService historyService;
     private final DataMaskingService maskingService;
     private final ChartService chartService;
+    private final RBACService rbacService;
 
     @PostMapping("/ask")
     public QueryResponse ask(@RequestHeader("Authorization") String authorization,
@@ -32,6 +35,18 @@ public class QueryController {
         String token = authorization.substring(7);
         String tenantCode = jwtTokenProvider.getTenantCode(token);
         Long userId = jwtTokenProvider.getUserId(token);
+        String username = jwtTokenProvider.getUsername(token);
+
+        // RBAC: user must have "query" permission for their tenant
+        if (!rbacService.checkPermission(username, tenantCode, "query")) {
+            return QueryResponse.error("RBAC denied: query permission required");
+        }
+
+        // Tenant isolation: verify JWT tenant matches TenantContext
+        String ctxTenant = TenantContext.get();
+        if (ctxTenant != null && !ctxTenant.equals(tenantCode)) {
+            return QueryResponse.error("Tenant access denied");
+        }
 
         long startTime = System.currentTimeMillis();
         QueryHistory history = new QueryHistory();
@@ -58,7 +73,7 @@ public class QueryController {
                     maskedData = maskingService.applyMasking(tenantCode, request.getTables().get(0), response.getData());
                     response.setData(maskedData);
                 }
-                
+
                 response.setChart(chartService.generateChart(enhancedQuestion, maskedData));
             }
 
@@ -67,7 +82,7 @@ public class QueryController {
             }
 
             historyService.save(history);
-            
+
             response.setConversationId("default");
             return response;
 

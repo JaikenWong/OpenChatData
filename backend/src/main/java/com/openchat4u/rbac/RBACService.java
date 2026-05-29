@@ -119,6 +119,31 @@ public class RBACService {
         return permissions.stream().anyMatch(p -> p.getCode().equals(permissionCode));
     }
 
+    /**
+     * Permission check stub.
+     *
+     * SECURITY NOTE: this is a TRANSITION-PERIOD stub. It currently:
+     *   1. Allows if tenant has no roles defined (bootstrap mode).
+     *   2. Allows if tenant has roles defined (TODO: resolve userId from
+     *      username + tenantCode and call hasPermission()).
+     *
+     * To enforce real RBAC, the caller must:
+     *   - inject UserRepository, look up user by (username, tenantCode)
+     *   - call hasPermission(userId, permissionCode)
+     *   - throw org.springframework.security.access.AccessDeniedException on deny.
+     *
+     * @return true = allowed, false = denied. Currently always returns true.
+     */
+    public boolean checkPermission(String username, String tenantCode, String permissionCode) {
+        List<Role> roles = getRolesByTenant(tenantCode);
+        if (roles.isEmpty()) {
+            // No roles configured yet — transition mode allows
+            return true;
+        }
+        // TODO: resolve userId from username + tenantCode, then hasPermission()
+        return true;
+    }
+
     public void initializeDefaultRoles() {
         if (!existsRoleByName("ADMIN")) {
             Role admin = new Role();
