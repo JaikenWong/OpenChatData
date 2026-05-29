@@ -1,17 +1,19 @@
 #!/usr/bin/env bash
 #
-# End-to-end MySQL onboarding for OpenChat4U.
+# End-to-end MySQL onboarding for OpenChat4U (带断言版本).
 #
 # Usage:
 #   bash backend/scripts/test-mysql.sh [question]
 #
 # Prereqs:
-#   * docker available locally
+#   * docker, jq
 #   * backend running at http://localhost:8080 (mvn spring-boot:run)
-#   * admin user seeded (default: admin / admin123, tenant demo)
+#   * admin user seeded (默认 admin/admin123, tenant demo)
 #
 
-set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib.sh
+source "$SCRIPT_DIR/lib.sh"
 
 API_BASE="${API_BASE:-http://localhost:8080}"
 ADMIN_USER="${ADMIN_USER:-admin}"
@@ -22,48 +24,45 @@ MYSQL_CONTAINER="${MYSQL_CONTAINER:-demo-mysql}"
 MYSQL_PORT="${MYSQL_PORT:-3307}"
 MYSQL_ROOT_PASSWORD="${MYSQL_ROOT_PASSWORD:-root}"
 MYSQL_DB="${MYSQL_DB:-salesdb}"
-# Host the BACKEND uses to reach MySQL.
-#   backend on host (mvn spring-boot:run)  -> localhost
-#   backend in docker (docker-compose)     -> host.docker.internal
 MYSQL_HOST_FOR_BACKEND="${MYSQL_HOST_FOR_BACKEND:-localhost}"
+PG_CONTAINER="${PG_CONTAINER:-openchat4u-postgres}"
 
 TENANT_NAME="${TENANT_NAME:-销售示例}"
 TENANT_CODE="${TENANT_CODE:-sales}"
 QUESTION="${1:-统计每个客户的订单总金额,按金额降序}"
 
-step() { echo; echo "==> $*"; }
-
-require_jq() {
-  if ! command -v jq >/dev/null 2>&1; then
-    echo "需要 jq, 请先 brew install jq" >&2
-    exit 1
-  fi
-}
-
 require_jq
+require_docker
+
+step "0. 后端可达性"
+if wait_for_backend "$API_BASE" 5; then
+  pass "backend up at $API_BASE"
+else
+  die "backend 未启动: $API_BASE/api/health"
+fi
 
 step "1. 起 MySQL ($MYSQL_CONTAINER 端口 $MYSQL_PORT)"
 if docker ps -a --format '{{.Names}}' | grep -q "^${MYSQL_CONTAINER}$"; then
   docker start "$MYSQL_CONTAINER" >/dev/null
+  pass "已存在容器已启动"
 else
   docker run -d --name "$MYSQL_CONTAINER" \
     -e MYSQL_ROOT_PASSWORD="$MYSQL_ROOT_PASSWORD" \
     -e MYSQL_DATABASE="$MYSQL_DB" \
     -p "${MYSQL_PORT}:3306" \
     mysql:8 >/dev/null
+  pass "新容器已创建"
 fi
 
 step "2. 等 MySQL 就绪"
-for i in $(seq 1 60); do
-  if docker exec "$MYSQL_CONTAINER" mysqladmin ping -uroot -p"$MYSQL_ROOT_PASSWORD" --silent >/dev/null 2>&1; then
-    echo "ready"
-    break
-  fi
-  sleep 2
-done
+if wait_for_mysql "$MYSQL_CONTAINER" "$MYSQL_ROOT_PASSWORD" 60; then
+  pass "MySQL ready"
+else
+  die "MySQL 60 次重试仍未就绪"
+fi
 
 step "3. 灌测试数据"
-docker exec -i "$MYSQL_CONTAINER" mysql --default-character-set=utf8mb4 -uroot -p"$MYSQL_ROOT_PASSWORD" "$MYSQL_DB" <<'SQL'
+mysql_exec "$MYSQL_CONTAINER" "$MYSQL_ROOT_PASSWORD" "$MYSQL_DB" <<'SQL'
 DROP TABLE IF EXISTS orders;
 DROP TABLE IF EXISTS customers;
 
@@ -91,22 +90,22 @@ INSERT INTO orders(customer_id,product,amount,created_at) VALUES
 (2,'iPhone',8000,'2026-04-20');
 SQL
 
-step "4. 登录 admin 拿 token"
-TOKEN=$(curl -sS -X POST "$API_BASE/api/auth/login" \
-  -H "Content-Type: application/json" \
-  -d "{\"username\":\"$ADMIN_USER\",\"password\":\"$ADMIN_PASS\",\"tenantCode\":\"$ADMIN_TENANT\"}" \
-  | jq -r .token)
-[ "$TOKEN" != "null" ] && [ -n "$TOKEN" ] || { echo "登录失败"; exit 1; }
-echo "token: ${TOKEN:0:40}..."
+ROWS=$(docker exec -i "$MYSQL_CONTAINER" mysql -uroot -p"$MYSQL_ROOT_PASSWORD" -N -s -e \
+  "SELECT (SELECT COUNT(*) FROM $MYSQL_DB.customers) + (SELECT COUNT(*) FROM $MYSQL_DB.orders);" 2>/dev/null)
+assert_eq "种子数据行数 (customers + orders)" "8" "$ROWS"
 
-step "5. 创建租户 $TENANT_CODE (如已存在, 跳过)"
-EXISTING=$(curl -sS "$API_BASE/api/admin/tenants" -H "Authorization: Bearer $TOKEN" \
-  | jq "[.[] | select(.code==\"$TENANT_CODE\")] | length")
-if [ "$EXISTING" -eq 0 ]; then
-  curl -sS -X POST "$API_BASE/api/admin/tenants" \
-    -H "Authorization: Bearer $TOKEN" \
-    -H "Content-Type: application/json" \
-    -d "$(cat <<JSON
+step "4. admin 登录拿 token"
+TOKEN=$(login "$API_BASE" "$ADMIN_USER" "$ADMIN_PASS" "$ADMIN_TENANT")
+assert_not_empty "admin token" "$TOKEN"
+[ -n "$TOKEN" ] || die "登录失败 — 检查 admin 用户是否种子化"
+echo "  token: ${TOKEN:0:40}..."
+
+step "5. 创建租户 $TENANT_CODE (如已存在则跳过)"
+LIST=$(http GET "$API_BASE/api/admin/tenants" "$TOKEN")
+assert_http_ok "GET /api/admin/tenants"
+EXISTING=$(echo "$LIST" | jq "[.[] | select(.code==\"$TENANT_CODE\")] | length")
+if [ "${EXISTING:-0}" = "0" ]; then
+  BODY=$(cat <<JSON
 {
   "name": "$TENANT_NAME",
   "code": "$TENANT_CODE",
@@ -119,39 +118,51 @@ if [ "$EXISTING" -eq 0 ]; then
   "connectionTimeout": 10000
 }
 JSON
-)" | jq .
+)
+  RESP=$(http POST "$API_BASE/api/admin/tenants" "$TOKEN" "$BODY")
+  assert_http_ok "POST /api/admin/tenants"
+  CREATED_CODE=$(echo "$RESP" | jq -r '.code // empty')
+  assert_eq "返回的 tenant code" "$TENANT_CODE" "$CREATED_CODE"
 else
-  echo "租户已存在"
+  pass "租户已存在, 跳过创建"
 fi
 
-step "6. 验证连通: 列表"
-curl -sS "$API_BASE/api/schema/$TENANT_CODE/tables" -H "Authorization: Bearer $TOKEN" | jq .
+step "6. 列表表结构"
+TABLES=$(http GET "$API_BASE/api/schema/$TENANT_CODE/tables" "$TOKEN")
+assert_http_ok "GET /api/schema/$TENANT_CODE/tables"
+N=$(echo "$TABLES" | jq 'length')
+assert_ge "表数量" "${N:-0}" "2"
+assert_contains "表列表含 customers" "customers" "$TABLES"
+assert_contains "表列表含 orders" "orders" "$TABLES"
 
-step "7. 同步表结构到 Qdrant"
-curl -sS -X POST "$API_BASE/api/schema/$TENANT_CODE/sync" \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '["customers","orders"]' | jq .
+step "7. 同步到 Qdrant"
+SYNC=$(http POST "$API_BASE/api/schema/$TENANT_CODE/sync" "$TOKEN" '["customers","orders"]')
+assert_http_ok "POST /api/schema/$TENANT_CODE/sync"
+SYNCED=$(echo "$SYNC" | jq -r '.synced // .count // "0"')
+echo "  synced response: $(echo "$SYNC" | head -c 200)"
 
-step "8. 给 $TENANT_CODE 租户也种一个 admin/admin123 用户 (postgres 容器内执行)"
-PG_CONTAINER="${PG_CONTAINER:-openchat4u-postgres}"
+step "8. 给 $TENANT_CODE 种 admin/admin123"
 docker exec "$PG_CONTAINER" psql -U postgres -d openchat4u -c \
   "INSERT INTO users(username,password_hash,tenant_code,status,login_attempts,created_at,updated_at)
    VALUES('admin','\$2a\$10\$iRy9I1nsTTY3ta5gMP35MebXJDBRKuAb8cROzNK1OTlclfXfQkMgC','$TENANT_CODE','ACTIVE',0,NOW(),NOW())
-   ON CONFLICT (username, tenant_code) DO NOTHING;"
+   ON CONFLICT (username, tenant_code) DO NOTHING;" >/dev/null
+pass "user seeded"
 
-step "9. 切到 $TENANT_CODE 租户登录并问数"
-TOKEN_SALES=$(curl -sS -X POST "$API_BASE/api/auth/login" \
-  -H "Content-Type: application/json" \
-  -d "{\"username\":\"$ADMIN_USER\",\"password\":\"$ADMIN_PASS\",\"tenantCode\":\"$TENANT_CODE\"}" \
-  | jq -r .token)
+step "9. 切到 $TENANT_CODE 问数"
+TOKEN_SALES=$(login "$API_BASE" "$ADMIN_USER" "$ADMIN_PASS" "$TENANT_CODE")
+assert_not_empty "tenant token" "$TOKEN_SALES"
+[ -n "$TOKEN_SALES" ] || die "$TENANT_CODE 登录失败"
 
-if [ "$TOKEN_SALES" = "null" ] || [ -z "$TOKEN_SALES" ]; then
-  echo "提示: $TENANT_CODE 租户下无用户, 跳过问数。先按 step 8 建用户后重跑。"
-  exit 0
-fi
+ASK=$(http POST "$API_BASE/api/query/ask" "$TOKEN_SALES" "{\"question\":\"$QUESTION\"}")
+assert_http_ok "POST /api/query/ask"
+SQL=$(echo "$ASK" | jq -r '.sql // empty')
+assert_not_empty "生成 SQL 非空" "$SQL"
+echo "  生成 SQL: $SQL"
+# 关键字断言：query 含 SUM + 客户 + 订单
+assert_contains "SQL 含 SUM" "sum" "$SQL"
+assert_contains "SQL 含 customers" "customers" "$SQL"
+assert_contains "SQL 含 orders" "orders" "$SQL"
+DATA_LEN=$(echo "$ASK" | jq '.data | length // 0')
+assert_ge "返回数据行数" "${DATA_LEN:-0}" "1"
 
-curl -sS -X POST "$API_BASE/api/query/ask" \
-  -H "Authorization: Bearer $TOKEN_SALES" \
-  -H "Content-Type: application/json" \
-  -d "{\"question\":\"$QUESTION\"}" | jq .
+print_summary
